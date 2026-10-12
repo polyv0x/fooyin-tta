@@ -1,4 +1,5 @@
-TTA playback for fooyin 0.13.1, with the final CUE track duration and waveform fix.
+Updates the plugin description and adds the full GPL notice to the plugin details.
+The original TTA reference code's BSD attribution is retained.
 
 Download the archive matching your Linux CPU:
 

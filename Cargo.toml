@@ -1,11 +1,11 @@
 [package]
 name = "fooyin-tta"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["polyv0x"]
 edition = "2021"
 rust-version = "1.74"
 license = "GPL-3.0-or-later"
-description = "Native Rust True Audio decoder and C bridge for fooyin"
+description = "Native Rust True Audio Lossless audio decoder."
 publish = false
 
 [lib]
