@@ -40,7 +40,11 @@ QT_QPA_PLATFORM=offscreen "$build_dir/tta_plugin_test" \
     echo "Architecture: $arch"
     echo "Fooyin SDK: $fooyin_version"
     printf 'Source commit: '
-    git rev-parse --verify HEAD 2>/dev/null || echo "uncommitted"
+    if [[ -n "${GITHUB_SHA:-}" ]]; then
+        echo "$GITHUB_SHA"
+    else
+        git rev-parse --verify HEAD 2>/dev/null || echo "uncommitted"
+    fi
     printf 'Qt: '
     qmake6 -query QT_VERSION
     printf 'glibc: '
