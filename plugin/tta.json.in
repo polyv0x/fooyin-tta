@@ -1,0 +1,9 @@
+{
+    "Name": "True Audio",
+    "Author": "polyv0x",
+    "Copyright": "Copyright (c) 2026 polyv0x",
+    "Version": "@PROJECT_VERSION@",
+    "Category": "Audio.Input",
+    "Description": "Native Rust TTA1 lossless audio decoder with seeking and checksum verification",
+    "License": ["GPL-3.0-or-later", "TTA algorithm incorporates BSD-3-Clause reference code; see LICENSES/tta-reference.txt."]
+}

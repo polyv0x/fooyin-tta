@@ -1,0 +1,20 @@
+[package]
+name = "fooyin-tta"
+version = "0.1.0"
+authors = ["polyv0x"]
+edition = "2021"
+rust-version = "1.74"
+license = "GPL-3.0-or-later"
+description = "Native Rust True Audio decoder and C bridge for fooyin"
+publish = false
+
+[lib]
+name = "fooyin_tta"
+crate-type = ["rlib", "staticlib"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
