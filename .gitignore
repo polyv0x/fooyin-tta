@@ -1,5 +1,13 @@
+# Rust and CMake build output
 /target/
 /build*/
 /dist/
+/compile_commands.json
+
+# Local tool settings and code index
+/CMakeUserPresets.json
 /.codebase-memory/
+
+# Python bytecode
 __pycache__/
+*.py[cod]

@@ -38,7 +38,11 @@ create_fooyin_plugin(tta
 target_include_directories(tta PRIVATE include)
 # The SDK's helper assumes fooyin's own build-directory variables. Use the
 # actual imported library directory for a standalone/user-prefix installation.
-set_target_properties(tta PROPERTIES INSTALL_RPATH "$<TARGET_FILE_DIR:Fooyin::Core>")
+if(CMAKE_INSTALL_RPATH)
+    set_target_properties(tta PROPERTIES INSTALL_RPATH "${CMAKE_INSTALL_RPATH}")
+else()
+    set_target_properties(tta PROPERTIES INSTALL_RPATH "$<TARGET_FILE_DIR:Fooyin::Core>")
+endif()
 if(UNIX AND NOT APPLE)
     target_link_libraries(tta PRIVATE m)
     target_link_options(tta PRIVATE "LINKER:--exclude-libs,ALL" "LINKER:--no-undefined")

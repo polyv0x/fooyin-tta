@@ -25,8 +25,13 @@ Output: **`build/fyplugin_tta.so`**. If CMake cannot find fooyin, add
 
 ## Install
 
+Download the archive for your Linux architecture from
+[Releases](https://github.com/polyv0x/fooyin-tta/releases) and extract it,
+or build the plugin above. Release binaries target fooyin 0.13.1 and use
+Debian 12 / Qt 6.4 as the build baseline.
+
 1. In fooyin's plugin settings, choose **Install Plugin** and select
-   `build/fyplugin_tta.so`.
+   the extracted `fyplugin_tta.so` (or `build/fyplugin_tta.so` after building).
 2. Restart fooyin and enable **True Audio** in the input settings.
 
 For CUE duration and waveform support, enable **True Audio** in the metadata
