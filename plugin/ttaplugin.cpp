@@ -4,6 +4,7 @@
 
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
 #include <QIODevice>
 
 #include <algorithm>
@@ -22,7 +23,9 @@ class TtaDecoder final : public Fooyin::AudioDecoder
     QStringList preferredExtensions() const override { return extensions(); }
     bool isSeekable() const override { return m_handle && !m_noSeeking; }
 
-    std::optional<Fooyin::AudioFormat> init(const Fooyin::AudioSource &source, const Fooyin::Track &,
+    const TtaStreamInfo &streamInfo() const { return m_info; }
+
+    std::optional<Fooyin::AudioFormat> init(const Fooyin::AudioSource &source, const Fooyin::Track &track,
                                             DecoderOptions options) override
     {
         stop();
@@ -61,6 +64,14 @@ class TtaDecoder final : public Fooyin::AudioDecoder
         {
             m_format.clearChannelLayout();
         }
+        // WaveBar and ReplayGain scans request NoSeeking, but still need the
+        // initial CUE segment offset. Position once before disabling seeks.
+        if(m_noSeeking && track.offset() > 0 && tta_seek(m_handle, sampleForTime(track.offset())) != 0)
+        {
+            qWarning() << "TTA:" << tta_last_error(m_handle);
+            stop();
+            return std::nullopt;
+        }
         return m_format;
     }
 
@@ -82,10 +93,7 @@ class TtaDecoder final : public Fooyin::AudioDecoder
         {
             return;
         }
-        // Clamp before multiplying, so even UINT64_MAX is a safe EOF seek.
-        const uint64_t endMs = (uint64_t{m_info.total_samples} * 1000 + m_info.sample_rate - 1) / m_info.sample_rate;
-        const uint64_t sample = milliseconds >= endMs ? m_info.total_samples : milliseconds * m_info.sample_rate / 1000;
-        tta_seek(m_handle, sample);
+        tta_seek(m_handle, sampleForTime(milliseconds));
     }
 
     ReadResult readAudio(size_t bytes) override
@@ -122,6 +130,13 @@ class TtaDecoder final : public Fooyin::AudioDecoder
     Fooyin::AudioBuffer readBuffer(size_t bytes) override { return readAudio(bytes).buffer; }
 
   private:
+    uint64_t sampleForTime(uint64_t milliseconds) const
+    {
+        // Clamp before multiplying, so even UINT64_MAX is a safe EOF seek.
+        const uint64_t endMs = (uint64_t{m_info.total_samples} * 1000 + m_info.sample_rate - 1) / m_info.sample_rate;
+        return milliseconds >= endMs ? m_info.total_samples : milliseconds * m_info.sample_rate / 1000;
+    }
+
     static int64_t readInput(void *context, uint8_t *output, size_t size) noexcept
     {
         try
@@ -183,6 +198,60 @@ class TtaDecoder final : public Fooyin::AudioDecoder
     std::vector<int32_t> m_samples;
     bool m_noSeeking{false};
 };
+
+// Supply technical metadata when no configured tag reader handles TTA. CUE
+// tracks inherit these properties; the final track needs the full file duration
+// because there is no following INDEX from which to calculate its end.
+class TtaReader final : public Fooyin::AudioReader
+{
+  public:
+    QStringList extensions() const override { return {QStringLiteral("tta")}; }
+    bool canReadCover() const override { return false; }
+    bool canWriteMetaData() const override { return false; }
+
+    bool init(const Fooyin::AudioSource &source) override
+    {
+        m_info = {};
+        m_fileSize = 0;
+        TtaDecoder probe;
+        if(!probe.init(source, {}, Fooyin::AudioDecoder::None))
+        {
+            return false;
+        }
+        m_info = probe.streamInfo();
+        const qint64 size = source.device ? source.device->size() : QFileInfo{source.filepath}.size();
+        if(size > 0)
+        {
+            m_fileSize = static_cast<uint64_t>(size);
+        }
+        return true;
+    }
+
+    bool readTrack(const Fooyin::AudioSource &, Fooyin::Track &track) override
+    {
+        if(m_info.sample_rate == 0)
+        {
+            return false;
+        }
+        const uint64_t duration = uint64_t{m_info.total_samples} * 1000 / m_info.sample_rate;
+        track.setDuration(duration);
+        track.setSampleFrames(m_info.total_samples);
+        track.setSampleRate(static_cast<int>(m_info.sample_rate));
+        track.setChannels(static_cast<int>(m_info.channels));
+        track.setBitDepth(static_cast<int>(m_info.bits_per_sample));
+        track.setCodec(QStringLiteral("TTA"));
+        track.setEncoding(QStringLiteral("Lossless"));
+        track.setFileSize(m_fileSize);
+        track.setBitrate(duration > 0 ? static_cast<int>(std::min(double(m_fileSize) * 8 / double(duration),
+                                                                  double(std::numeric_limits<int>::max())))
+                                      : 0);
+        return true;
+    }
+
+  private:
+    TtaStreamInfo m_info{};
+    uint64_t m_fileSize{0};
+};
 } // namespace
 
 QString TtaPlugin::inputName() const
@@ -194,5 +263,6 @@ Fooyin::InputCreator TtaPlugin::inputCreator() const
 {
     Fooyin::InputCreator creator;
     creator.decoder = [] { return std::make_unique<TtaDecoder>(); };
+    creator.reader = [] { return std::make_unique<TtaReader>(); };
     return creator;
 }

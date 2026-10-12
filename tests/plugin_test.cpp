@@ -148,15 +148,94 @@ void verifyErrors(const Fooyin::InputCreator &creator, const QString &directory)
     check(!decoder->isSeekable(), "failed init retained old decoder");
 }
 
+void verifyReader(const Fooyin::InputCreator &creator, const QString &directory, bool deviceSource)
+{
+    const QString path = directory + QStringLiteral("/stereo16.tta");
+    const auto pcm = load(directory + QStringLiteral("/stereo16.s32le"));
+    ShortReadBuffer input;
+    input.setData(load(path));
+    check(input.open(QIODevice::ReadOnly | QIODevice::Unbuffered), "could not open metadata source");
+    Fooyin::AudioSource source;
+    source.filepath = deviceSource ? QStringLiteral("archive://missing/album.tta") : path;
+    source.device = deviceSource ? &input : nullptr;
+    auto reader = creator.reader();
+    Fooyin::Track track{path};
+    track.setTitle(QStringLiteral("CUE title"));
+    track.setArtists({QStringLiteral("CUE artist")});
+    check(!reader->readTrack(source, track), "uninitialised reader succeeded");
+    check(reader->preferredExtensions().isEmpty(), "technical reader overrides configured tag readers");
+    check(reader->init(source) && reader->readTrack(source, track), "TTA metadata read failed");
+    check(track.sampleFrames() == static_cast<uint64_t>(pcm.size()) / 8, "incorrect total sample count");
+    check(track.duration() == 2094, "missing or incorrect TTA duration");
+    check(track.sampleRate() == 8000 && track.channels() == 2 && track.bitDepth() == 16,
+          "incorrect TTA audio properties");
+    check(track.fileSize() == static_cast<uint64_t>(input.size()) && track.bitrate() > 0,
+          "missing TTA file properties");
+    check(track.codec() == QStringLiteral("TTA") && track.encoding() == QStringLiteral("Lossless"),
+          "incorrect codec metadata");
+    check(track.title() == QStringLiteral("CUE title") && track.artists() == QStringList{QStringLiteral("CUE artist")},
+          "technical reader overwrote tags");
+    check(input.isOpen(), "metadata reader closed borrowed input");
+
+    QByteArray invalid{"not a TTA file"};
+    QBuffer bad{&invalid};
+    check(bad.open(QIODevice::ReadOnly), "could not open invalid metadata input");
+    source.device = &bad;
+    check(!reader->init(source), "metadata reader accepted invalid TTA");
+    check(!reader->readTrack(source, track), "failed metadata init retained previous properties");
+}
+
+void verifyCueScan(const Fooyin::InputCreator &creator, const QString &directory)
+{
+    Fooyin::AudioLoader loader;
+    loader.addReader(QStringLiteral("True Audio"), creator.reader);
+    loader.addDecoder(QStringLiteral("True Audio"), creator.decoder);
+    Fooyin::Track image{directory + QStringLiteral("/stereo16.tta")};
+    check(loader.readTrackMetadata(image), "registry could not obtain TTA image duration");
+
+    // A final CUE track has no following INDEX: fooyin derives its duration
+    // from the image metadata, then scans that segment with NoSeeking set.
+    Fooyin::Track last{image};
+    last.setCuePath(directory + QStringLiteral("/album.cue"));
+    last.setOffset(1000);
+    check(image.duration() > last.offset(), "final CUE track has unknown duration");
+    last.setDuration(image.duration() - last.offset());
+    check(last.duration() == 1094, "incorrect final CUE track duration");
+    auto loaded =
+        loader.loadDecoderForTrack(last, Fooyin::AudioDecoder::NoSeeking | Fooyin::AudioDecoder::NoInfiniteLooping);
+    check(loaded.decoder != nullptr && loaded.format.has_value(), "could not load CUE waveform decoder");
+    loaded.decoder->start();
+    loaded.decoder->seek(last.offset());
+    const auto expected = load(directory + QStringLiteral("/stereo16.s32le"));
+    const auto stride = static_cast<size_t>(loaded.format->bytesPerFrame());
+    const auto startByte = last.offset() * loaded.format->sampleRate() / 1000 * stride;
+    size_t decoded = 0;
+    while(true)
+    {
+        const auto result = loaded.decoder->readAudio(4096);
+        if(result.status == Fooyin::AudioDecoder::ReadStatus::EndOfStream)
+        {
+            break;
+        }
+        check(result.status == Fooyin::AudioDecoder::ReadStatus::DecodedAudio, "CUE waveform decoding failed");
+        check(result.buffer.startTime() == (startByte + decoded) / stride * 1000 / loaded.format->sampleRate(),
+              "CUE scan started at the wrong timestamp");
+        compare(result.buffer, expected, startByte + decoded);
+        decoded += result.buffer.byteCount();
+    }
+    check(decoded == static_cast<size_t>(expected.size()) - startByte, "CUE scan did not cover the final track");
+    check(decoded >= loaded.format->bytesForDuration(last.duration()), "not enough audio for final waveform");
+}
+
 void verifyRegistry(Fooyin::InputPlugin *plugin, const QString &directory)
 {
     Fooyin::AudioLoader loader;
     loader.addDecoder(plugin->inputName(), plugin->inputCreator().decoder);
+    loader.addReader(plugin->inputName(), plugin->inputCreator().reader);
     const QString path = directory + QStringLiteral("/stereo16.tta");
     Fooyin::Track track{path};
-    // AudioLoader starts with an empty registry; fooyin registers its built-in
-    // metadata readers during application startup, outside this plugin test.
     check(loader.supportedTrackExtensions().contains(QStringLiteral("tta")), "TTA not advertised by registry");
+    check(loader.readTrackMetadata(track) && track.duration() > 0, "registry failed to read TTA metadata");
     auto loaded = loader.loadDecoderForTrack(track);
     check(loaded.decoder != nullptr, "fooyin registry failed to open TTA");
     check(loaded.name == plugin->inputName(), "fooyin selected a different TTA decoder");
@@ -186,6 +265,7 @@ int main(int argc, char **argv)
         check(plugin->inputName() == QStringLiteral("True Audio"), "wrong plugin identity");
         const auto creator = plugin->inputCreator();
         check(static_cast<bool>(creator.decoder), "missing decoder factory");
+        check(static_cast<bool>(creator.reader), "missing metadata reader factory");
         const QString directory = QString::fromLocal8Bit(argv[2]);
         for(const auto *name : {"mono8", "stereo8", "stereo16", "surround24", "silence16"})
         {
@@ -195,8 +275,12 @@ int main(int argc, char **argv)
             }
         }
         verifyErrors(creator, directory);
+        verifyReader(creator, directory, false);
+        verifyReader(creator, directory, true);
+        verifyCueScan(creator, directory);
         verifyRegistry(plugin, directory);
-        std::cout << "Plugin loaded; PCM, timestamps, seeking, EOF, cancellation, reinit, device ownership, and error "
+        std::cout << "Plugin loaded; metadata, CUE scans, PCM, timestamps, seeking, EOF, cancellation, reinit, device "
+                     "ownership, and error "
                      "handling passed\n";
         return 0;
     }

@@ -71,8 +71,16 @@ FOOYIN_PLUGIN_PATH="$HOME/.local/lib/fooyin/plugins" fooyin
 
 Restart fooyin after installing. The input backend is named **True Audio**
 and declares `.tta` as a preferred extension. Keep it enabled in fooyin's input
-settings. The plugin registers a decoder only; fooyin's configured metadata
-readers remain responsible for tags, artwork, and library metadata.
+settings. The plugin also registers a fallback metadata reader for duration,
+exact sample count, sample rate, bit depth, channel count, and bitrate. This lets
+fooyin calculate the final CUE track's duration and generate its waveform.
+Configured tag readers retain their normal priority; the fallback reader leaves
+existing tags intact and does not read or write tags or artwork.
+
+After upgrading from a decoder-only version, enable **True Audio** in the metadata
+reader list as well, then reload the affected CUE files or rescan their metadata
+to replace cached zero durations. Regenerate any previously cached CUE waveforms
+so they use the correct track offsets.
 
 ## Tests and standalone decoding
 
@@ -87,7 +95,8 @@ decoder when generated. Tests compare every sample, exercise frame boundaries
 and seeks, and reject truncated inputs, bad CRCs, invalid headers, and malformed
 Rice codes. CTest also loads the actual plugin through Qt and fooyin's decoder
 registry, checking file and borrowed-device input, short reads, timestamps, EOF,
-errors, cancellation, and repeated initialisation.
+errors, cancellation, repeated initialisation, technical metadata, and final CUE
+track scans with the same decoder options used by WaveBar.
 
 For an optional wider comparison covering up to 32 channels and 768 kHz:
 
